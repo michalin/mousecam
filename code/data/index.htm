@@ -1,0 +1,304 @@
+<!--
+Download the required opencv.js from https://docs.opencv.org/4.6.0/opencv.js
+Note: This will not fit on the ESP32 SPIFFS file system, so open from PC.
+-->
+<!DOCTYPE HTML>
+<html>
+
+<head>
+  <title>Mouse Sensor Camera</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <style>
+    html {
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      color: white;
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      font-weight: bold;
+    }
+
+    .espcontrol {
+      display: inline-grid;
+      grid-template-columns: 200px auto 200px;
+      background-color: mediumblue;
+      justify-content: center;
+    }
+
+    .header {
+      display: grid;
+      grid-column: -1/1;
+      background-color: darkviolet;
+
+    }
+
+    .left {
+      background-color: #777;
+    }
+
+    .middle {
+      background-color: black;
+    }
+
+    .right {
+      background-color: #777;
+    }
+
+    .footer {
+      display: grid;
+      grid-template-columns: auto auto auto;
+      grid-column: -1/1;
+      gap: 0px;
+      background-color: darkslateblue;
+      color: white;
+      align-items: center;
+    }
+
+    .slider_box {
+      padding: 5px;
+      display: grid;
+      justify-content: left;
+      border: darkslateblue;
+      border-style: dotted;
+      border-width: 1px;
+
+    }
+
+    .slider {
+      width: 180px;
+    }
+
+    .image {
+      background-color: #143642;
+      width: 64px;
+      height: 64px;
+    }
+
+    .meters {
+      grid-column: 3/4;
+    }
+
+    meter {
+      width: 400px
+    }
+
+    .radiogroup {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-auto-rows: minmax(50px, auto);
+      align-content: end;
+      border: darkslateblue;
+      border-style: solid;
+      border-width: 2px;
+    }
+
+    .udbutton {
+      background-color: #3e8e41;
+      border-color: white;
+    }
+
+    .udbutton:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+
+    .arrowline {
+      stroke-linecap: round;
+      stroke: yellow;
+      stroke-width: 4;
+      fill: none
+    }
+  </style>
+
+  <script script type="text/javascript">
+    var gateway = "ws://mousecam.local/ws";
+    //var gateway = "ws://192.168.4.1/ws";
+    var alfa = 1; //Contrast
+    var beta = 0; //Brightness
+    var act_channel = 0;
+    var settings = { "speed": 1, "cmd": 0};
+    var resolution;
+    const IDLE = 0;
+    const SCAN = 1;
+    const STOP = 2;
+    const ACK = 3;
+    const GO_UP = 4;
+    const GO_DN = 5;
+    const GO_STOP = 6;
+    const btn_txt_scan = "Scan";
+    const btn_txt_stop = "Stop";
+    const btn_txt_cancelled = "Cancelled";
+    var scanvals;
+    var cvimage;
+    var websocket;
+    var iteration = 0;
+    window.addEventListener('load', onLoad);
+
+    function dbgMat(mat) {
+      console.log('image width: ' + mat.cols + '\n' +
+        'image height: ' + mat.rows + '\n' +
+        'image size: ' + mat.size().width + '*' + mat.size().height + '\n' +
+        'image depth: ' + mat.depth() + '\n' +
+        'image channels ' + mat.channels() + '\n' +
+        'image type: ' + mat.type() + '\n');
+      console.log(mat.data);
+    }
+
+    function show_canvas() {
+      scanvals.convertTo(cvimage, cv.CV_16UC1, alfa, beta);
+      cv.resize(cvimage, cvimage, new cv.Size(480, 480), 0, 0, iteration);
+      cv.rotate(cvimage, cvimage, cv.ROTATE_180)
+      cv.imshow("cvcanvas", cvimage);
+    }
+
+    function onOpenCVReady() {
+      console.log("Open CV ready");
+      initWebSocket();
+      resolution = 18;
+      scanvals = cv.Mat.zeros(resolution, resolution, cv.CV_16UC1);
+      cvimage = cv.Mat.zeros(resolution, resolution, cv.CV_16UC1);
+      alfa = Number(document.getElementById("sld_cont").value);
+      document.getElementById("sld_cont").oninput = function () {
+        alfa = Number(this.value);
+        show_canvas();
+      }
+      beta = Number(document.getElementById("sld_bright").value);
+      document.getElementById("sld_bright").oninput = function () {
+        beta = Number(this.value);
+        show_canvas();
+      }
+    }
+    
+    function onWsOpen(event) {
+      console.log('Websocket open');
+      //websocket.send(JSON.stringify(settings)); //Send settings to init ESP32
+      //Outgoing messages from user interaction
+      document.getElementsByName("rad_iter").forEach(function (radio) {
+        radio.onchange = function () {
+          iteration = Number(radio.value);
+          console.log(iteration);
+          show_canvas();
+        }
+      });
+
+      document.getElementById("sld_speed").oninput = function () {
+        settings.speed = this.value;
+        websocket.send(JSON.stringify(settings));
+        //console.log(JSON.stringify(settings));
+      }
+
+      document.getElementById("h2_connected").innerHTML = "Connected";
+    }
+    function onWsClose(event) {
+      console.log('Websocket closed');
+      document.getElementById("h2_connected").innerHTML = "Not Connected";
+      setTimeout(initWebSocket, 2000);
+    }
+
+    function onMessage(event) { //Event handler for messages from ESP32
+      //console.log(event.data);
+      if (event.data == "stop") {
+        document.getElementById("btn_scan").innerHTML = btn_txt_scan;
+        return;
+      }
+      var arr = JSON.parse(event.data).data;
+      document.getElementById("met_quality").value = JSON.parse(event.data).squal;
+      scanvals = cv.matFromArray(resolution, resolution, cv.CV_8UC1, arr);
+      show_canvas();
+      settings.cmd = ACK;
+      websocket.send(JSON.stringify(settings));
+      settings.cmd = IDLE;
+    }
+
+    function initWebSocket() {
+      //console.log('Trying to open a WebSocket connection...');
+      websocket = new WebSocket(gateway);
+      websocket.onopen = onWsOpen;
+      websocket.onclose = onWsClose;
+      websocket.onmessage = onMessage; // <-- add this line
+    }
+
+    //Receiving bulk date
+    function onLoad(event) { //Initialize html elements when page is loading
+      console.log("onLoad()");
+
+      document.getElementsByName("rad_iter").forEach(function (radio) {
+        if (radio.checked) {
+          iteration = Number(radio.value);
+        }
+      });
+      settings.speed = Number(document.getElementById("sld_speed").value);
+    }
+    var Module = {
+      // https://emscripten.org/docs/api_reference/module.html#Module.onRuntimeInitialized
+      onRuntimeInitialized() {
+        onOpenCVReady();
+      }
+    }
+  </script>
+  <!--<script async src="https://docs.opencv.org/4.8.0/opencv.js" type="text/javascript"></script>-->
+  <script async src="opencv.js" type="text/javascript"></script>
+
+</head>
+
+<body>
+  <div class="espcontrol">
+    <div class="header">
+      <h1>Mouse Sensor Camera</h1>
+    </div>
+    <div class="left">
+      <div class="slider_box">
+        <label for="sld_cont">Contrast</label>
+        <input class="slider" type="range" id="sld_cont" min="256" max="2048" value="1024" step="128">
+      </div>
+      <div class="slider_box">
+        <label for="sld_bright">Brightness</label>
+        <input class="slider" type="range" id="sld_bright" min="-65536" max="32768" value="0">
+      </div>
+    </div>
+    <div class="middle">
+      <!--<div class="image">-->
+      <canvas id="cvcanvas" width=480 height=480></canvas>
+      <!--</div>-->
+    </div>
+    <div class="right">
+      <div class="radiogroup">
+        <div style="grid-column: -1/1"><h3>Iteration</h3></div>
+        <div><label for="rad1">Nearest</label>
+        <input type="radio" id="rad1" name="rad_iter" value="0" checked></div>
+        <div><label for="rad2">Linear</label>
+        <input type="radio" id="rad2" name="rad_iter" value="1"></div>
+        <div><label for="rad3">Cubic</label>
+        <input type="radio" id="rad3" name="rad_iter" value="2"></div>
+        <div><label for="rad4">Lanczos4</label>
+        <input type="radio" id="rad4" name="rad_iter" value="4"></div>
+      </div>
+
+      <div class="slider_box">
+        <label for="sld_speed">Scan Speed</label>
+        <input class="slider" type="range" id="sld_speed" min="0" max="15">
+      </div>
+      <!--<hr>
+      <button type="button" id="btn_scan" style="width: 90%;"></button>-->
+    </div>
+    <div class="footer">
+      <div>
+        <h2 id="h2_connected">Not Connected</h2>
+      </div>
+      <div>
+        <p>
+          <label for="met_quality">Quality</label>
+          <meter id="met_quality" min="0" max="128" low="10"></meter>
+        </p>
+      </div>
+     <div>
+    </div>
+</body>
+
+</html>
