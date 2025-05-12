@@ -14,4 +14,5 @@ Displays frames captured by an optical mouse sensor on a simple web user interfa
 `const char *password = "your password";`
 - Compile and flash the sketch
 - Open the local file [code/data/index.htm](code/data/index.htm) in your browser.
-
+## Important Note
+**The ESP32 API has changed from versions 2.X (based on ESP-IDF 4.4) to version 3.0 (based on ESP-IDF 5.1) of the Arduino ESP32 core. Only compiles against version 2.X. Find more information here: Migration from 2.x to 3.0 or try to compile against API V2.X**
